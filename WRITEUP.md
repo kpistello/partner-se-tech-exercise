@@ -2,220 +2,220 @@
 
 ## Summary
 
-The customer's app worked on paper but was built on a general-purpose Debian image, ran as root with Flask's debug server, pulled unpinned packages from public PyPI, and exposed its database. I moved the app container to Chainguard's minimal Python images with a two-stage build, configured dependency installation to use Chainguard Libraries only, removed everything the app doesn't need, and tightened the Docker Compose setup, while keeping `docker compose up --build` as the single command a developer runs.
+The customer's app ran on a general-purpose Debian image, as root, with Flask's debug server, unpinned packages from public PyPI, and an exposed database. I moved it to Chainguard's minimal Python images with a two-stage build, configured dependencies to install from Chainguard Libraries only, removed everything the app doesn't need, and hardened the Compose setup, while keeping `docker compose up --build` as the single command a developer runs.
 
-Along the way, baseline testing showed that **the starter app no longer starts at all** on a fresh build, because an unpinned dependency changed its behavior upstream. That is now fixed by naming the database driver explicitly, and prevented from recurring by locking every package, including indirect ones, to an exact version.
+Baseline testing also showed that **the starter app no longer starts at all** on a fresh build, because an unpinned dependency changed upstream. That is now fixed by naming the database driver explicitly, and prevented from recurring by locking every package, including indirect ones, to an exact version.
 
 ### Before and after
 
 | Measurement | Before | After |
 |---|---|---|
-| Known vulnerabilities (total) | **373** (61 high) | **0** |
+| Known vulnerabilities | **373** (61 high) | **0** |
 | ...in the OS layer | 357 (57 high) | 0 |
 | ...in Python packages | 16 (4 high) | 0 |
 | App image size | 353 MB (85.2 MB compressed) | 163 MB (40.3 MB compressed), **−54%** |
-| Runs as | root (`uid=0`) | non-root (`65532`) |
-| Shell and extra tools in image | `sh`, `curl`, `vim`, `nc`, `pip` | none |
-| Starts on a fresh build | **No**, crashes on startup | Yes, both containers healthy |
+| Runs as | root | non-root (`65532`) |
+| Shell and extra tools | `sh`, `curl`, `vim`, `nc`, `pip` | none |
+| Starts on a fresh build | **No**, crashes | Yes, both containers healthy |
 | Web server | Flask dev server with `debug=True` | gunicorn |
-| Database port | published on all interfaces (`0.0.0.0:5432`) | not published (internal only) |
+| Database port | published on all interfaces | not published |
 | App port | all interfaces | localhost only |
-| Python | 3.11 (Debian slim) | 3.15.2 (Chainguard) |
-| Dependency pinning | direct packages only | every package, including indirect ones |
+| Dependency pinning | direct packages only | every package |
 
-*Scanned with Trivy 0.76.2 on November 24, 2026. The "after" image was built with packages from public PyPI because Chainguard Libraries access was blocked at the time (see [Chainguard Libraries access](#chainguard-libraries-access)).*
+*Scanned with Trivy 0.76.2 on November 24, 2026. The "after" image used packages from public PyPI because Chainguard Libraries access was blocked (see [Chainguard Libraries access](#chainguard-libraries-access)).*
 
 ## How to run
 
 ```bash
-# Chainguard Libraries credentials, read from your shell and passed to the build as secrets
 export CHAINGUARD_PYTHON_IDENTITY_ID=...
 export CHAINGUARD_PYTHON_TOKEN=...
-
 docker compose up --build
 ```
 
-Then open http://localhost:8000.
+Then open http://localhost:8000. Database settings have local defaults and can be overridden by copying `.env.example` to `.env` (git-ignored).
 
-Database settings have local-development defaults. To override them, copy `.env.example` to `.env` (which is git-ignored).
+For testing without Chainguard Libraries access only: `PIP_INDEX_URL=https://pypi.org/simple/ docker compose up --build`. The override exists because customers usually point builds at a repository manager that proxies Chainguard Libraries. The default remains Chainguard Libraries only, with no PyPI fallback.
 
-For testing only, while Chainguard Libraries access is unavailable, the package source can be overridden:
+## Working environment
 
-```bash
-PIP_INDEX_URL=https://pypi.org/simple/ docker compose up --build
-```
+I completed this exercise on a train between London and Edinburgh, over a mobile hotspot, where downloading Docker Desktop was estimated at 20 hours. Rather than wait, I switched to **GitHub Codespaces**, a cloud development environment with Docker preinstalled that runs in the browser, so all the downloading and building happened in GitHub's infrastructure instead of over my connection.
 
-This override exists because real customers usually point builds at a repository manager (Artifactory, Nexus, Cloudsmith) that proxies Chainguard Libraries. The default remains Chainguard Libraries only, with no PyPI fallback.
+It also proved a useful test in its own right. The full workflow (Chainguard images, build secrets, and `docker compose up --build`) works unchanged in a cloud development environment, which matters for customers standardizing on them. Codespaces also surfaced the database port risk when it offered to make Postgres public (see [issues found](#issues-found-through-due-diligence-and-fixed)). One quirk: Codespaces secrets didn't reach the environment as expected, so I entered the Chainguard credentials per session with hidden input, never writing them to a file or shell history.
 
 ## What I changed and why
 
 ### Why this matters to the business
 
-The technical changes below add up to outcomes a customer's leadership, security team, and engineers each care about:
-
-- **Less time lost to vulnerability triage.** Every scanner finding has to be investigated, fixed, or formally accepted as a risk, usually by engineers who would rather be shipping features. Going from 373 findings to 0 removes that work for this service and keeps security reviews focused on issues that matter. Staying near zero depends on keeping base images current, which is why digest-update automation is on the next-steps list.
-- **Easier compliance and faster security reviews.** Frameworks such as SOC 2, PCI DSS, and FedRAMP expect known vulnerabilities to be fixed within set timeframes, and enterprise buyers increasingly ask vendors for clean scans and an account of where their software comes from. A minimal image with no known vulnerabilities, built from Chainguard-built packages, makes those conversations shorter and audits less painful.
-- **Lower breach risk, and less damage if one happens.** Public package registries are a recurring attack route: hijacked maintainer accounts, look-alike package names, and tampered releases. Using only Chainguard-built packages narrows that exposure. And if an attacker does get in, a non-root container with no shell, no tools, and a read-only filesystem gives them very little to work with.
-- **Reliable builds and fewer surprise outages.** The starter app broke without anyone touching its code, because an upstream package changed. Locked dependencies and pinned images mean the same inputs produce the same result every time, and upgrades happen as deliberate, reviewed changes rather than surprises on deploy day.
-- **Faster, cheaper delivery.** A 54% smaller image means quicker pulls in CI and at deploy time, plus less storage and network transfer across every environment that runs it.
-- **Low cost to adopt.** The application code needed only two small edits, and developers still run a single command. Teams gain these benefits without a rewrite or a new workflow to learn, which is what makes the pattern practical to repeat across a customer's other services.
+- **Less time lost to vulnerability triage.** Every scanner finding has to be investigated, fixed, or formally accepted. Going from 373 to 0 gives that engineering time back.
+- **Easier compliance and faster security reviews.** Frameworks such as SOC 2, PCI DSS, and FedRAMP expect known vulnerabilities to be fixed within set timeframes, and enterprise buyers ask for clean scans. Starting from zero makes both easier.
+- **Lower breach risk, and less damage if one happens.** Trusted packages narrow the supply chain attack surface, and a locked-down container leaves an attacker little to work with.
+- **Reliable builds.** The starter broke without anyone touching its code. Locked inputs mean the same build every time, with upgrades as deliberate decisions.
+- **Faster, cheaper delivery.** A 54% smaller image means quicker pulls in CI and deployment, and less storage and transfer.
+- **Low cost to adopt.** Two small code edits and the same one-command workflow, so the pattern is practical to repeat across other services.
 
 ### 1. Container image (`app/Dockerfile`)
 
-- **Moved to Chainguard Python images with a two-stage build.** Packages are installed in `cgr.dev/chainguard/python:latest-dev`, which has a shell and pip. Only the finished virtual environment and app files are copied into `cgr.dev/chainguard/python:latest`, which has no shell and no package manager. Build tools never reach the image that runs.
-- **Runs as Chainguard's non-root user (65532).** App code and packages stay root-owned, so the running app can read but not modify them.
-- **Removed `curl`, `vim`, and `netcat`.** The app used none of them, and they are useful to an attacker who gets in.
-- **Removed pip from the shipped image.** It's only needed to install packages, and it carried a bundled copy of a vulnerable setuptools (see [issues found](#issues-found-through-due-diligence-and-fixed)).
-- **Pinned both base images by digest.** Every build uses exactly the same images rather than whatever `latest` points to that day.
-- **Added `.dockerignore`** so stray files, and especially a `.env` file, can't end up in the build.
+- **Chainguard Python images with a two-stage build.** Packages install in `python:latest-dev`; only the finished app is copied into the minimal `python:latest`, which has no shell or package manager.
+
+  *Why it matters:* the unused Debian system accounted for 357 of the 373 findings. Not shipping it removes that patching work at the source.
+- **Runs as non-root (65532), with app files root-owned.**
+
+  *Why it matters:* an attacker who exploits the app gets its permissions. Without root, and unable to change the app's own files, they have far less to work with.
+- **Removed `curl`, `vim`, and `netcat`.**
+
+  *Why it matters:* downloading tools, editing files, and opening a connection back are an attacker's usual first moves after breaking in. These were a ready-made toolkit.
+- **Removed pip from the shipped image.**
+
+  *Why it matters:* a running app never needs to install packages, and pip's bundled setuptools was the source of the last 3 findings (see [issues found](#issues-found-through-due-diligence-and-fixed)).
+- **Pinned both base images by digest.**
+
+  *Why it matters:* `latest` changes over time. A digest guarantees every developer, CI run, and deployment uses the identical image, and updates arrive as reviewable changes.
+- **Added `.dockerignore`.**
+
+  *Why it matters:* it keeps files like `.env` out of the build, so real passwords can't end up in a shared image.
 
 ### 2. Dependencies (`app/requirements.in`, `app/requirements.txt`)
 
-- **Configured installation to use Chainguard Libraries only** (`https://libraries.cgr.dev/python/simple/`), with no fallback to public PyPI. If a package isn't available from Chainguard, the build fails rather than quietly pulling it from elsewhere.
-- **Credentials are handled as BuildKit secrets.** They're written to a temporary in-memory file only for the install step, so they never land in an image layer, the build history, or the repository.
-- **Removed unused packages:** `requests` (which also had known vulnerabilities) and `humanize`. Neither is imported anywhere.
-- **Locked every package to an exact version, including indirect ones.** `requirements.in` lists the five packages the app actually needs, and `requirements.txt` is the full locked list generated from it.
-- **Replaced `psycopg2-binary` with `pg8000`** (see [tradeoffs](#tradeoffs)).
-- **Upgraded gunicorn** from 21.2.0, which has known vulnerabilities, to 27.0.1, and actually uses it.
+- **Chainguard Libraries only** (`https://libraries.cgr.dev/python/simple/`), with no fallback to public PyPI.
+
+  *Why it matters:* public registries are a recurring attack route (look-alike names, hijacked accounts, tampered releases). Chainguard rebuilds packages from source, and with no fallback, a missing package stops the build instead of silently coming from PyPI.
+- **Credentials passed as BuildKit secrets**, used only for the install step.
+
+  *Why it matters:* build arguments, environment variables, or credentials typed into the Dockerfile leave the token readable in the image or repository. With secrets, it never persists.
+- **Removed unused `requests` (which had known vulnerabilities) and `humanize`.**
+
+  *Why it matters:* unused code still has to be scanned and patched, and it's still available to an attacker. Pure cost, no benefit.
+- **Locked every package to an exact version**, with `requirements.in` listing the five direct dependencies and `requirements.txt` the full locked list.
+
+  *Why it matters:* this is what fixed the broken app, and it makes next month's build identical to today's.
+- **Replaced `psycopg2-binary` with `pg8000`.**
+
+  *Why it matters:* `psycopg2-binary` bundles prebuilt system libraries that sit outside both the minimal image and Chainguard's rebuilt-from-source model. pg8000 is pure Python (see [tradeoffs](#tradeoffs)).
+- **Upgraded gunicorn** from 21.2.0, which has known vulnerabilities, to 27.0.1, and actually used it.
+
+  *Why it matters:* the web server faces every request, so its vulnerabilities are among the most reachable in the app.
 
 ### 3. Application runtime (`app/app.py`)
 
-- **Removed `debug=True`.** Flask's debugger allows code execution by anyone who can reach the page.
-- **Replaced the dev server with gunicorn**, started directly by the image. `entrypoint.sh` was removed, since it needed a shell the new image doesn't have.
-- **Removed the hardcoded database credentials** from the code. The database address now comes only from the environment and names its driver explicitly.
+- **Removed `debug=True`.**
+
+  *Why it matters:* debug mode turns error pages into a Python console that runs code on the server, guarded only by a PIN. Flask's documentation says never to use it in production.
+- **Replaced the dev server with gunicorn** and removed `entrypoint.sh`, which needed a shell.
+
+  *Why it matters:* Flask's built-in server isn't built for real traffic. gunicorn handles concurrent requests and restarts failed workers, so local behavior matches production.
+- **Removed hardcoded database credentials**; the address comes from the environment and names its driver.
+
+  *Why it matters:* credentials in code spread to every copy of the repository and can't be rotated without a code change. The explicit driver prevents another silent switch.
 
 ### 4. Local orchestration (`docker-compose.yml`)
 
-- **The app waits for the database to be ready** (a health check plus `depends_on: condition: service_healthy`) rather than just started.
-- **Removed the published database port.** Only the app can reach Postgres, over Compose's private network.
+- **The app waits for a healthy database** (`depends_on: condition: service_healthy`).
+
+  *Why it matters:* otherwise startup is a race the app can lose, and flaky local setups push developers toward insecure workarounds.
+- **Removed the published database port.**
+
+  *Why it matters:* the database had a guessable password, and Codespaces even offered to make the port public. Now only the app can reach it.
 - **Bound the app to localhost** (`127.0.0.1:8000`).
-- **Locked down the app container at runtime:** read-only filesystem (with a small temporary `/tmp`), all Linux capabilities dropped, and `no-new-privileges`.
-- **Added health checks and automatic restarts** for both services. The app's health check uses Python, since there's no shell or curl in the image.
-- **Removed the `./app:/app` volume mount**, which replaced the hardened image's contents with the local folder at runtime.
-- **Moved credentials to variables** with local-development defaults and optional `.env` overrides, and removed `SECRET_KEY`, which the app never used.
-- **Pinned the Postgres image by digest** and removed the obsolete `version` attribute.
+
+  *Why it matters:* by default, a published port is reachable from any network the laptop is on, such as office Wi-Fi or a coffee shop.
+- **Runtime lockdown:** read-only filesystem (with a small `/tmp`), all Linux capabilities dropped, and `no-new-privileges`.
+
+  *Why it matters:* each closes a common step in turning a bug into a full compromise: modifying files, using special permissions, or gaining more rights.
+- **Health checks and automatic restarts** for both services, with the app's check written in Python since there's no shell.
+
+  *Why it matters:* "running" isn't "working." These let Docker, and later production orchestration, detect and recover from failures.
+- **Removed the `./app:/app` volume mount.**
+
+  *Why it matters:* it replaced the built image's files at runtime, so what ran wasn't what was scanned and hardened.
+- **Credentials as variables** with local defaults and `.env` overrides; removed the unused `SECRET_KEY`.
+
+  *Why it matters:* configuration stays out of tracked files, and the unused setting implied a protection that didn't exist.
+- **Pinned Postgres by digest** and removed the obsolete `version` attribute.
+
+  *Why it matters:* the same reproducibility for the database, and no constant warning teaching people to ignore output.
 
 ## Risks reduced
 
 | Risk | Before | After |
 |---|---|---|
-| Known vulnerabilities in the shipped image | 373, including 61 high | 0 at time of scan |
-| Remote code execution through Flask's debugger | debug mode on | dev server and debug mode gone |
-| Impact of a compromise | root, with a shell and attacker tooling available | non-root, no shell, no tools, read-only filesystem, no capabilities |
-| Tampered or unexpected upstream packages | anything from public PyPI, mostly unpinned | Chainguard-built packages only, every version locked |
-| Builds silently changing | indirect dependencies drifted and broke the app | every package locked; base images pinned by digest |
-| Credential leakage | DB password in code and Compose; no protection for a `.env` file | no credentials in code; build secrets never stored; `.env` git-ignored and excluded from builds |
-| Database exposed beyond the app | port published on all interfaces | not published |
-| Flaky startup | app could start before the database was ready | app waits for a healthy database |
+| Known vulnerabilities in the image | 373, including 61 high | 0 at time of scan |
+| Code execution through Flask's debugger | debug mode on | dev server and debugger gone |
+| Impact of a compromise | root, shell, attacker tooling | non-root, no shell or tools, read-only, no capabilities |
+| Tampered or unexpected packages | public PyPI, mostly unpinned | Chainguard-built only, every version locked |
+| Builds silently changing | indirect dependency drift broke the app | packages locked, images pinned by digest |
+| Credential leakage | password in code and Compose | none in code; build secrets never stored; `.env` excluded |
+| Database exposure | published on all interfaces | not published |
+| Flaky startup | app could start before the database | waits for a healthy database |
 
 ## Issues found through due diligence and fixed
 
-Measuring before changing, and re-testing after each change, turned up several problems that wouldn't have been visible from reading the code alone.
+Measuring before changing, and re-testing after each change, surfaced problems that reading the code wouldn't have.
 
-**1. The starter app no longer starts.** On a fresh build, the app crashed with `ModuleNotFoundError: No module named 'psycopg'`. The cause: SQLAlchemy wasn't pinned, and SQLAlchemy 2.1.0 (released September 24, 2026) changed the default PostgreSQL driver for `postgresql://` addresses from `psycopg2` to `psycopg` (v3). The app's code hadn't changed; an indirect dependency drifted upstream. **Fix:** every package is now locked to an exact version, and the database address names its driver explicitly (`postgresql+pg8000://`). This is the clearest argument in the exercise for reproducible, pinned dependencies.
-
-**2. The exposed database port wasn't theoretical.** While the original app ran in GitHub Codespaces, Codespaces detected the published Postgres port and offered to forward it, including an option to make it public. With the default `postgres/postgres` credentials, that would have put the database on the internet. **Fix:** the database port is no longer published.
-
-**3. A hidden vulnerable package.** After the migration, the scan still showed 3 findings in setuptools 70.3.0, even though setuptools isn't a dependency and no setuptools files exist in the image. The source was pip, which bundles part of setuptools 70.3.0 internally. **Fix:** pip is removed from the shipped virtual environment, since the running app never installs packages. Result: 0 findings. Context worth noting: one of the three was Windows-only, and the high-severity one was in a legacy download feature the app never calls. Even so, removing an unneeded package beats arguing about exploitability.
-
-**4. gunicorn 27 tries to write to the home directory.** Testing showed that gunicorn 27 creates a "control socket" file in the user's home directory at startup by default, which fails in a read-only container. **Fix:** disabled with `--no-control-socket`, since the feature isn't needed.
-
-**5. Authentication failures were confusing.** When Chainguard Libraries rejected the credentials, pip tried to prompt for a username in a non-interactive build and crashed with an `EOFError` that looked like a Dockerfile bug. **Fix:** pip runs with `--no-input`, and the build logs whether credentials were provided, without revealing them. One remaining limitation: pip then reports "no matching distribution" for both a rejected login and a genuinely missing package, so I confirmed the cause with a direct request to the index (HTTP 401).
-
-**6. The startup race, verified.** On a completely fresh start (database volume deleted), the app waited about 6 seconds for Postgres to finish initializing before starting. In the original setup it would have tried to connect immediately.
+1. **The starter app no longer starts.** It crashed with `ModuleNotFoundError: No module named 'psycopg'`. SQLAlchemy wasn't pinned, and SQLAlchemy 2.1.0 (released September 24, 2026) changed the default driver for `postgresql://` addresses to `psycopg` (v3). **Fix:** every package locked, and the driver named explicitly (`postgresql+pg8000://`).
+2. **The exposed database port wasn't theoretical.** Running the original app in GitHub Codespaces, Codespaces offered to make Postgres's port public, with the default `postgres/postgres` login. **Fix:** port no longer published.
+3. **A hidden vulnerable package.** The migrated image still showed 3 findings in setuptools 70.3.0, although no setuptools files existed. The source was pip, which bundles part of setuptools. **Fix:** pip removed from the shipped image, giving 0 findings. One finding was Windows-only and the high one in a legacy feature the app never calls, but removing the package beat arguing about exploitability.
+4. **gunicorn 27 writes to the home directory at startup** (a "control socket"), which fails on a read-only filesystem. **Fix:** disabled with `--no-control-socket`.
+5. **Authentication failures looked like Dockerfile bugs.** On a 401, pip tried to prompt for a username and crashed with `EOFError`. **Fix:** `--no-input`, plus a log line saying whether credentials were provided, without revealing them. Because pip then reports a rejected login and a missing package the same way, I confirmed the cause with a direct request (HTTP 401).
+6. **The startup race, verified fixed.** From a fresh database, the app waited about 6 seconds for Postgres before starting.
 
 ## Chainguard Libraries access
 
-**How it's designed to work.** The Dockerfile defaults to `https://libraries.cgr.dev/python/simple/` with no PyPI fallback. Compose passes the identity ID and token from the shell environment into the build as BuildKit secrets, and the build writes them to a temporary in-memory `netrc` file used only by pip. The build log confirms credentials arrive this way ("credentials: provided via build secrets").
+**Design.** The build defaults to `https://libraries.cgr.dev/python/simple/` with no fallback. Compose passes the identity ID and token from the shell into the build as secrets, written to a temporary in-memory `netrc` used only by pip. The build log confirms they arrive ("credentials: provided via build secrets").
 
-**What happened.** Every request to `libraries.cgr.dev` returned **HTTP 401**, both from the build and from direct requests. I ruled out the likely causes on my side:
+**What happened.** Every request returned **HTTP 401**, from the build and directly. I ruled out expiry (valid until December 23, 2026), formatting (expected lengths, a single `/` in the ID), and the network (requests came from GitHub's infrastructure, and a 401 is a deliberate server response). The 401 carried no reason. I reported it to the exercise owner, who issued the credentials, in my submission email, with the request trace ID (`a9c8c169c75a5b380e9bf5761cbce646`, 16:11 UTC on November 24). The likely cause is a missing Python libraries pull role, or an ID and token that aren't a matching pair.
 
-- The token isn't expired (valid until December 23, 2026).
-- The ID and token have the expected lengths and format: a single `/` in the ID, and no stray characters.
-- It isn't a network problem. Requests ran from GitHub's infrastructure, and a 401 is a deliberate response from Chainguard's server.
+**Validation.** I built with public PyPI only to test everything else end to end. The committed default remains Chainguard Libraries only.
 
-The server's 401 carried no reason. I reported it to the exercise owner, who issued the credentials, in my submission email, with the request trace ID (`a9c8c169c75a5b380e9bf5761cbce646`, 16:11 UTC on November 24) so Chainguard can see why the request was refused. The likely cause is that this identity is missing the Python libraries pull role, or that the ID and token aren't a matching pair.
-
-**How I validated everything else.** I temporarily built with packages from public PyPI to verify the image, hardening, and Compose changes end to end. The committed default remains Chainguard Libraries only.
-
-**What remains once access is restored:**
-
-1. Build with the default configuration and confirm every locked package is available from Chainguard Libraries. The less common ones (`pg8000`, `asn1crypto`, `scramp`) are the ones to watch. If any are missing, the options are a different driver or asking Chainguard to add them.
-2. Regenerate `requirements.txt` against Chainguard Libraries **with hashes**, and install with `--require-hashes`. This has to be done against Chainguard's index, because Chainguard rebuilds packages from source, so their hashes differ from PyPI's.
-3. Re-run the vulnerability scan on the image built from Chainguard packages.
+**Remaining once access works:** confirm every locked package is available from Chainguard Libraries (`pg8000`, `asn1crypto`, and `scramp` are the ones to watch), regenerate `requirements.txt` with hashes against Chainguard's index (rebuilt packages have different hashes than PyPI's), install with `--require-hashes`, and re-scan.
 
 ## Tradeoffs
 
-- **pg8000 instead of psycopg.** Chainguard's runtime image deliberately lacks `libpq`, the system library that psycopg2 and psycopg need. `psycopg2-binary` works around that by bundling prebuilt system libraries, which conflicts with the rebuilt-from-source model. pg8000 is pure Python and needs nothing extra. The cost is lower performance, which doesn't matter for this app but would be worth benchmarking for a high-traffic service.
-- **One gunicorn worker with four threads.** The app creates its tables at startup. Multiple worker processes would each try to do that at once against a fresh database and could collide. One worker with threads avoids that without adding a migration tool. The proper long-term fix is migrations (below).
-- **Digest pinning vs. automatic updates.** Pinned images give reproducible builds, but they won't pick up Chainguard's frequent security rebuilds until someone updates the digest. That's acceptable only with automated update pull requests (below).
-- **Kept the official `postgres:15` image.** The exercise focuses on the application container. Moving to Chainguard's Postgres image is worthwhile, but it likely means a major-version change, which requires migrating existing developers' data volumes. I'd plan that rather than slip it in.
-- **Default local database credentials remain in Compose.** I chose to keep `docker compose up --build` working with no setup step over requiring a `.env` file. The risk is low, since the database isn't published and is reachable only by the app, and `.env` can override the defaults.
-- **No hot-reload developer mode.** Developers rebuild to see code changes. I kept the hardened configuration as the default rather than add an automatically loaded override file that would quietly re-publish the database and re-add the source mount.
-- **Hashes deferred.** Exact versions are locked now, but hash verification has to wait for Chainguard Libraries access.
+- **pg8000 instead of psycopg.** The minimal runtime lacks `libpq`, which psycopg needs. pg8000 is pure Python, at the cost of performance that doesn't matter here but would for a high-traffic service.
+- **One gunicorn worker with four threads.** Multiple workers would each try to create the tables on a fresh database and could collide. The long-term fix is migrations.
+- **Digest pinning vs. automatic updates.** Pinned images don't pick up Chainguard's security rebuilds until updated, which is only acceptable with automated update pull requests.
+- **Kept the official `postgres:15` image.** The exercise targets the app container, and moving to Chainguard's Postgres likely means a major-version upgrade that needs a planned data migration.
+- **Default local database credentials in Compose.** I kept `docker compose up --build` working with no setup step. The risk is low because the database is unpublished, and `.env` can override them.
+- **No hot-reload developer mode.** Developers rebuild to see changes, rather than an auto-loaded override file that would quietly undo the hardening.
+- **Hashes deferred** until Chainguard Libraries access works.
 
 ## What I'd do next in a real customer engagement
 
-1. **Restore Libraries access and finish the dependency work:** confirm package availability, regenerate the lock file with hashes, and enforce `--require-hashes`.
-2. **Route packages through the customer's repository manager.** Configure Chainguard Libraries as an upstream in Artifactory, Nexus, or Cloudsmith, so developers and CI use one internal endpoint instead of each holding a Chainguard token.
-3. **Use short-lived credentials in CI.** Replace long-lived pull tokens with an OIDC-based assumable identity, and fail the build on new high or critical findings.
-4. **Automate digest updates** with digestabot or Renovate, so Chainguard's security rebuilds arrive as reviewed, tested pull requests.
-5. **Verify what runs.** Check Chainguard's image signatures and SBOMs with cosign, and enforce signed images with an admission policy at deploy time.
-6. **Move the database to Chainguard's Postgres image** with a planned data migration.
-7. **Application-level follow-ups** outside this exercise's scope: replace `db.create_all()` with real migrations (for example, Alembic), add CSRF protection to the forms, and clear deprecation warnings (`datetime.utcnow`, the legacy `Query.get`).
-8. **Agree on success measures with the customer**, such as vulnerability counts over time, time spent triaging scanner findings, and time to roll out a fixed base image.
+1. **Finish the dependency work** once access is restored: availability check, hashed lock file, `--require-hashes`.
+2. **Route packages through the customer's repository manager** (Artifactory, Nexus, or Cloudsmith) with Chainguard Libraries as an upstream, so developers and CI don't each hold tokens.
+3. **Use short-lived credentials in CI** (an OIDC assumable identity), and fail builds on new high or critical findings.
+4. **Automate digest updates** with digestabot or Renovate.
+5. **Verify what runs:** check Chainguard's image signatures and SBOMs with cosign, and enforce signed images at deploy time.
+6. **Move the database to Chainguard's Postgres** with a planned migration.
+7. **App follow-ups:** real migrations (for example, Alembic) instead of `db.create_all()`, CSRF protection on the forms, and clearing deprecation warnings.
+8. **Agree on success measures:** vulnerability counts over time, triage time, and time to roll out a fixed base image.
 
 ## How a partner would repeat this
 
-This exercise took one service through the full path. A partner (reseller, consultancy, or systems integrator) can turn the same path into a repeatable offering across a customer's portfolio.
+A partner (reseller, consultancy, or systems integrator) can turn this into a repeatable offering across a customer's services.
 
-### The playbook
+**The playbook:**
 
-1. **Baseline first.** Scan the current image and record its size, the user it runs as, the tools inside it, and whether it builds and starts cleanly from scratch. Note the scanner version and date. This gives the customer a before/after story, and it often uncovers problems nobody knew about, like the broken startup here.
-2. **Two-stage build on Chainguard images.** Install in the `-dev` variant and ship only the result on the minimal runtime image, running as non-root. Pin both images by digest.
-3. **Dependencies from Chainguard Libraries.** Pass credentials as build secrets, allow no fallback to public registries, and lock every package, including indirect ones, with hashes generated against Chainguard's index.
-4. **Remove what the app doesn't need.** OS tools, unused packages, and the package installer itself have no place in the shipped image.
-5. **Harden the runtime.** Use a production server, a read-only filesystem, dropped capabilities, `no-new-privileges`, and health checks, and don't publish internal services like databases.
-6. **Re-measure with the same scanner** and present the before/after to the customer.
+1. **Baseline:** scan, size, user, tools, and a clean build from scratch, with scanner version and date.
+2. **Two-stage build** on Chainguard images, non-root, pinned by digest.
+3. **Chainguard Libraries** via build secrets, no public fallback, everything locked with hashes from Chainguard's index.
+4. **Remove what the app doesn't need**, including the package installer.
+5. **Harden the runtime:** production server, read-only filesystem, dropped capabilities, health checks, no published internal services.
+6. **Re-measure** with the same scanner and present the before/after.
 
-### Known issues to plan for
+**Known issues to plan for** (details in [issues found](#issues-found-through-due-diligence-and-fixed)): database drivers needing system libraries; pip's bundled setuptools; PyPI hashes not matching Chainguard's; no shell for entrypoints or health checks; apps writing files at startup on a read-only filesystem; unpinned indirect dependencies; confirming package availability early; and Compose override files that load automatically and can undo hardening.
 
-These came up in this exercise and are likely to recur across other Python services:
-
-- **Database drivers that need system libraries.** `psycopg2` and `psycopg` need `libpq`, which the minimal runtime image doesn't include. Choose a pure-Python driver, or deliberately bring the library across from the build stage.
-- **Scanners flag pip's bundled setuptools.** Remove pip from the shipped image.
-- **Hashes from PyPI won't match.** Chainguard rebuilds packages from source, so lock files must be generated against Chainguard's index.
-- **No shell in the runtime image.** Shell-script entrypoints and `curl`-based health checks have to be replaced.
-- **Apps that write files at startup** (here, gunicorn 27's control socket) fail on a read-only filesystem. Test with the hardened settings, not just the new image.
-- **Unpinned indirect dependencies** can break a build without anyone touching the code. Expect the baseline to surface these.
-- **Package availability.** Confirm early that every dependency exists in Chainguard Libraries. Because builds fail closed, a missing package blocks the build rather than quietly pulling from PyPI.
-- **Compose override files load automatically.** A `docker-compose.override.yml` added for developer convenience can quietly re-publish ports or remount source code and undo the hardening.
-
-### Where the partner adds value beyond the migration
-
-- **Assessment:** baseline the customer's services and prioritize by exposure and business importance.
-- **Platform setup:** Chainguard Libraries as an upstream in the customer's repository manager, short-lived CI credentials, automated digest updates, and signature and policy enforcement at deploy time.
-- **Migration at scale:** turn the playbook into "golden" Dockerfile and Compose templates per language, so each additional service is faster than the last.
-- **Ongoing service:** keep images current, report on vulnerability trends, and supply evidence for audits and customer security reviews.
+**Where the partner adds value:** assessing and prioritizing services; platform setup (repository manager, CI credentials, digest automation, policy enforcement); golden Dockerfile and Compose templates so each service is faster than the last; and ongoing updates, reporting, and audit evidence.
 
 ## AI tool usage
 
-**Tools used:** Claude (Anthropic), through claude.ai, throughout the exercise.
+**Tool:** Claude (Anthropic), through claude.ai, throughout the exercise.
 
-**Where I used it:**
-
-- Understanding the exercise and planning the approach.
-- Setting up my environment: checking my Mac for tools and moving to GitHub Codespaces when the Docker Desktop download was too slow on my connection.
-- Reviewing the starter repo to identify likely problems.
-- Drafting the Dockerfile, Compose file, and requirements changes.
-- Troubleshooting: the startup crash, the Chainguard Libraries 401, the setuptools finding, and git remotes.
-- Drafting this write-up from my notes.
+**Where:** understanding the exercise and planning; setting up my environment (including moving to GitHub Codespaces when the Docker Desktop download was too slow); reviewing the starter repo; drafting the Dockerfile, Compose, and requirements changes; troubleshooting the crash, the 401, the setuptools finding, and git; and drafting this write-up from my notes.
 
 **How I separated AI suggestions from my own judgment:**
 
-- **I verified every claim by running it myself.** Every number in the before/after table comes from commands I ran on the original and the updated images. I treated the starter-repo review as a list of hypotheses and confirmed each one by testing.
-- **AI was wrong in places, and testing caught it.** Claude predicted the startup crash was a timing problem; the logs showed it was the SQLAlchemy driver change. Claude once misread a failed local scan as a clean result and later corrected itself. Its suggestion that the token's audience would reveal the token type turned out not to help. Each of these was resolved by checking actual output rather than accepting the explanation.
-- **Decisions were mine.** Claude recommended pg8000 and a configurable package source for testing. I evaluated and accepted both, and I chose to keep the hardened setup as the default over a dev-convenience override.
-- **Other sources.** The idea to pin base images by digest came from reviewing another candidate's public fork of this exercise. I implemented it in my own way and tested it.
-- **AI-run tests.** Claude tested the proposed package set on Python 3.15 against Postgres before I applied the changes. That's how the gunicorn control-socket issue surfaced early. I then confirmed everything in my own builds and scans.
-- **Cleanup.** Claude reviewed the files after I pushed them and flagged leftover commented-out code from my copy-pasting, including an old hardcoded password and the old `debug=True` line. I removed it and re-tested before pushing again.
+- **I verified by running.** Every number here comes from commands I ran on the original and updated images. I treated the starter-repo review as hypotheses and confirmed each by testing.
+- **AI was wrong in places, and testing caught it.** Claude predicted the crash was a timing problem; the logs showed the driver change. It once misread a failed local scan as clean, and a suggestion to read the token's audience didn't help diagnose the 401. Each was resolved by checking actual output.
+- **Decisions were mine.** Claude recommended pg8000 and a configurable package source for testing; I evaluated and accepted both. I kept the hardened setup as the default rather than add a dev-convenience override.
+- **AI-run tests.** Claude tested the package set on Python 3.15 against Postgres before I applied the changes, which surfaced the gunicorn issue early. I confirmed everything in my own builds.
+- **Cleanup.** Claude reviewed my pushed files and flagged leftover commented-out code from copy-pasting, including an old hardcoded password and `debug=True`. I removed it and re-tested.
