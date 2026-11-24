@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
-# What this does: it builds in a "workshop" image that has tools, then copies only the finished app into a bare "showroom" image. The Chainguard login is used only during the install and is never saved. The app runs as a non-root user with a proper production server.
 
 # ---------- Build stage ----------
 # Chainguard's -dev variant includes pip and a shell, needed only to install packages.
-# FROM cgr.dev/chainguard/python:latest-dev AS build
 
 # Base images pinned by digest for reproducible builds; keep current with a digest-update bot (e.g. digestabot, Renovate).
 FROM cgr.dev/chainguard/python:latest-dev@sha256:b73b9e61fa9e0c6ec59c68ee2db1a08a4a61b969dbe03a39c309033749ef7f78 AS build
@@ -35,12 +33,11 @@ RUN --mount=type=secret,id=cg_identity_id \
     fi; \
     NETRC=/tmp/auth/netrc pip install --no-input --no-cache-dir --index-url "$PIP_INDEX_URL" -r requirements.txt
 
-    # pip is only needed to install packages, not to run the app; remove it from the venv we ship.
+# pip is only needed to install packages, not to run the app; remove it from the venv we ship.
 RUN python -m pip uninstall -y pip
 
 # ---------- Runtime stage ----------
 # Minimal Chainguard image: no shell, no package manager.
-# FROM cgr.dev/chainguard/python:latest
 FROM cgr.dev/chainguard/python:latest@sha256:a76d3a2d5a7ba23ac51e1de1d119796142888aeb7d8276b53c7abbb919e3dc5d
 
 WORKDIR /app

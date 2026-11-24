@@ -5,10 +5,6 @@ from flask import Flask, redirect, render_template, request, url_for
 from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-# app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-#     'DATABASE_URL',
-#     'postgresql://postgres:postgres@db:5432/todos'
-# )
 
 # The database address must come from the environment; no credentials in code.
 # It should name the driver explicitly, e.g. postgresql+pg8000://...
@@ -74,6 +70,5 @@ with app.app_context():
 
 
 if __name__ == '__main__':
-    # app.run(host='0.0.0.0', port=8000, debug=True)
     # Local convenience only; the container runs gunicorn. Debug stays off.
     app.run(host='0.0.0.0', port=8000)
