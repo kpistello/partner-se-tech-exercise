@@ -3,7 +3,10 @@
 
 # ---------- Build stage ----------
 # Chainguard's -dev variant includes pip and a shell, needed only to install packages.
-FROM cgr.dev/chainguard/python:latest-dev AS build
+# FROM cgr.dev/chainguard/python:latest-dev AS build
+
+# Base images pinned by digest for reproducible builds; keep current with a digest-update bot (e.g. digestabot, Renovate).
+FROM cgr.dev/chainguard/python:latest-dev@sha256:b73b9e61fa9e0c6ec59c68ee2db1a08a4a61b969dbe03a39c309033749ef7f78 AS build
 
 # Package index. Defaults to Chainguard Libraries (Chainguard-built packages only, no PyPI fallback).
 # Can be pointed at a repository manager that proxies Chainguard Libraries.
@@ -37,7 +40,8 @@ RUN python -m pip uninstall -y pip
 
 # ---------- Runtime stage ----------
 # Minimal Chainguard image: no shell, no package manager.
-FROM cgr.dev/chainguard/python:latest
+# FROM cgr.dev/chainguard/python:latest
+FROM cgr.dev/chainguard/python:latest@sha256:a76d3a2d5a7ba23ac51e1de1d119796142888aeb7d8276b53c7abbb919e3dc5d
 
 WORKDIR /app
 ENV PATH="/app/venv/bin:$PATH" \

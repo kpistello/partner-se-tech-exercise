@@ -36,7 +36,9 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:15
+    # image: postgres:15
+    image: postgres:15@sha256:91b9edc40277faf94bc1e3d7ae621b185fa70f3099b94309c4731a8296114870
+    
     # No published port: only the app can reach the database, over the Compose network.
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-todos}
