@@ -1,0 +1,6 @@
+# Direct dependencies only. requirements.txt is the locked, fully pinned list generated from this file.
+Flask
+Flask-SQLAlchemy
+SQLAlchemy
+gunicorn
+pg8000

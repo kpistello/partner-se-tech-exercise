@@ -1,6 +1,42 @@
-Flask==2.3.3
-Flask-SQLAlchemy==3.1.1
-psycopg2-binary==2.9.9
-gunicorn==21.2.0
-requests==2.31.0
-humanize==4.9.0
+# Locked dependency list: every package, including indirect ones, pinned to an exact version.
+# Generated from requirements.in for Python 3.15 (the version in cgr.dev/chainguard/python).
+# What this does: it removes requests, humanize, and psycopg2-binary, adds pg8000, and locks every package, including the indirect ones like SQLAlchemy that broke the app.
+asn1crypto==1.5.1
+    # via scramp
+blinker==1.9.0
+    # via flask
+click==8.5.1
+    # via flask
+flask==3.1.3
+    # via
+    #   -r requirements.in
+    #   flask-sqlalchemy
+flask-sqlalchemy==3.1.1
+    # via -r requirements.in
+gunicorn==27.0.1
+    # via -r requirements.in
+itsdangerous==2.2.0
+    # via flask
+jinja2==3.1.6
+    # via flask
+markupsafe==3.0.4
+    # via
+    #   flask
+    #   jinja2
+    #   werkzeug
+pg8000==1.31.6
+    # via -r requirements.in
+python-dateutil==4.0.0
+    # via pg8000
+scramp==1.5.0
+    # via pg8000
+sqlalchemy==2.1.9
+    # via
+    #   -r requirements.in
+    #   flask-sqlalchemy
+typing-extensions==4.16.0
+    # via sqlalchemy
+tzdata==2026.6
+    # via python-dateutil
+werkzeug==3.1.9
+    # via flask
